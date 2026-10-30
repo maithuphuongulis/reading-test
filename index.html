@@ -95,6 +95,10 @@ select, input[type=text], input[type=tel] { font: inherit; font-size: 16px; padd
 .passage-text { font-family: var(--font-read); font-size: 17.5px; line-height: 1.8; max-width: 64ch; display: flex; flex-direction: column; gap: 14px; }
 .passage-text p { border-radius: 6px; transition: background-color 0.3s; }
 .passage-text p.para-hl { background: var(--hl-soft); box-shadow: 0 0 0 6px var(--hl-soft); }
+.cloze { font: inherit; color: var(--ink); background: var(--hl-soft); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; cursor: pointer; }
+#vQuiz[data-reading="no"] .pane.passage, #vQuiz[data-reading="no"] .tabs { display: none; }
+#vQuiz[data-reading="no"] .split { grid-template-columns: 1fr; }
+#vQuiz[data-reading="no"] .pane.qpane { display: block; width: 100%; }
 mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding: 1px 2px; }
 .pane-label { font-size: 12.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 14px; }
 .back { position: sticky; bottom: 12px; margin-top: 24px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
@@ -415,7 +419,9 @@ function renderClass(data) {
     var t = entry.t, status = 'Chưa làm', button = 'Làm bài';
     if (t.status === 'dang') { status = t.stage === 2 ? 'Đang làm vòng 2' : 'Đang làm'; button = 'Làm tiếp'; }
     if (t.status === 'xong') { status = 'Xong · ' + t.score + '/' + t.total + (t.final != null ? ' (sau sửa ' + t.final + '/' + t.total + ')' : ''); button = 'Xem lại'; }
-    h += '<article class="card"><h3>' + esc(t.title) + '</h3><p class="note">' + esc(t.mode) + '</p>' + (t.due ? '<p class="' + (t.dueOver ? 'overdue' : 'note') + '">Hạn nộp: ' + esc(t.due) + (t.dueOver ? ' (đã qua)' : '') + '</p>' : '') + '<p>' + esc(status) + '</p><button class="btn primary" data-g="' + esc(t.g) + '">' + button + '</button></article>';
+    h += '<article class="card"><h3>' + esc(t.title) + '</h3><p class="note">' + esc(t.mode) + '</p>' + (t.due ? '<p class="' + (t.dueOver ? 'overdue' : 'note') + '">Hạn nộp: ' + esc(t.due) + (t.dueOver ? ' (đã qua)' : '') + '</p>' : '') + '<p>' + esc(status) + '</p>' +
+      (t.maxAttempts ? '<p>Đã thử ' + t.tries + '/' + t.maxAttempts + (t.best != null ? ' · cao nhất ' + Math.round(t.best * 100) + '%' : '') + (t.revealed ? ' · Đã mở đáp án' : '') + '</p>' : '') +
+      '<button class="btn primary" data-g="' + esc(t.g) + '">' + button + '</button>' + (t.canRetake ? ' <button class="btn ghost" data-g="' + esc(t.g) + '" data-new="yes">Thử lại (còn ' + t.attemptsLeft + ' lần)</button>' : '') + '</article>';
   });
   h += '</div>' + (!tests.length ? '<p>Cô chưa giao bài nào. Em quay lại sau nhé.</p>' : '') + '<div class="card" style="margin-top:24px"><h2>Tiến bộ của em</h2>' + classChart(data.progress);
   if (data.errors.length) h += '<h3>Các dạng lỗi em cần chú ý</h3>' + data.errors.slice(0, 3).map(function (e) { return '<div class="type"><b>' + esc(e.label) + ' · ' + e.count + ' lần</b><p>' + esc(e.tip) + '</p></div>'; }).join('');
@@ -432,7 +438,7 @@ function classStart(g, wantNew) {
 $('btnClassBack').addEventListener('click', openClass);
 $('classContent').addEventListener('click', function (ev) {
   var b = ev.target.closest('button'); if (!b || C.busy) return;
-  if (b.hasAttribute('data-g')) return classStart(b.getAttribute('data-g'), false);
+  if (b.hasAttribute('data-g')) return classStart(b.getAttribute('data-g'), b.hasAttribute('data-new'));
   if (b.getAttribute('data-class') === 'change') { C.name = ''; C.pin = ''; S.ses = null; classRemember(''); renderClassNames(''); }
   else if (b.getAttribute('data-class') === 'enter') {
     var name = $('className').value, pin = $('classPin').value.trim();
@@ -444,7 +450,7 @@ $('classContent').addEventListener('click', function (ev) {
 
 function modeText(i) {
   if (i.mode === 'Kiểm tra') return 'Kiểm tra · làm một lần, không có gợi ý';
-  return i.fixRound ? 'Luyện tập · làm hết, nộp, rồi sửa câu sai một vòng' : 'Luyện tập · nộp xong xem giải thích';
+  return i.fixRound ? 'Luyện tập · làm hết, nộp, rồi sửa câu sai một vòng' : 'Luyện tập · nộp xong xem kết quả';
 }
 
 function renderStart() {
@@ -501,7 +507,8 @@ function load(ses) {
   S.ans = {};
   ses.questions.forEach(function (q) { S.ans[q.num] = copyVal(q.value); });
   $('hTitle').textContent = ses.title;
-  $('hSub').textContent = ses.name + ' · Lớp ' + ses.cls + (ses.kind === 'Luyện lại' ? ' · Luyện lại' : '');
+  $('hSub').textContent = ses.name + ' · Lớp ' + ses.cls + (ses.attemptNo > 1 ? ' · Lần ' + ses.attemptNo + '/' + ses.maxAttempts : '');
+  $('vQuiz').setAttribute('data-reading', ses.passage.trim() ? 'yes' : 'no');
   renderPassage();
   if (ses.stage === 3) return renderReport();
   if (ses.stage === 2) return renderRound1();
@@ -519,6 +526,32 @@ function firstOpen() {
 
 // ---------------------------------------------------------------- Bài đọc và tô vàng
 
+function passageHtml(text) {
+  var re = /\{\{(\d+)\}\}/g, m, pos = 0, h = '';
+  while ((m = re.exec(text))) {
+    h += esc(text.slice(pos, m.index));
+    var q = S.ses.questions.filter(function (q) { return q.num === +m[1]; })[0];
+    if (q) {
+      var v = S.ans[q.num], values = [].concat(v || []);
+      var answer = isText(q) ? v : values.map(function (k) {
+        var o = q.options.filter(function (o) { return o.key === k; })[0];
+        return o ? (o.text || o.disp) : k;
+      }).join(', ');
+      h += '<button class="cloze" data-q="' + q.num + '" aria-label="Đến câu ' + q.num + '">' + q.num + ': ' + esc(answer || '____') + '</button>';
+    } else h += esc(m[0]);
+    pos = re.lastIndex;
+  }
+  return h + esc(text.slice(pos));
+}
+$('passage').addEventListener('click', function (ev) {
+  var b = ev.target.closest('[data-q]'); if (!b) return;
+  var i = S.ses.questions.map(function (q) { return q.num; }).indexOf(+b.getAttribute('data-q'));
+  go(i);
+  $('qNo').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  var field = $('answerBox').querySelector('input:not(:disabled),button:not(:disabled)');
+  if (field) field.focus(); else { $('qNo').setAttribute('tabindex', '-1'); $('qNo').focus(); }
+});
+
 function renderPassage() {
   var box = $('passage');
   box.innerHTML = '';
@@ -528,7 +561,7 @@ function renderPassage() {
   while ((m = re.exec(text))) {
     if (!m[0].trim()) continue;
     var p = document.createElement('p');
-    p.textContent = m[0];
+    p.innerHTML = passageHtml(m[0]);
     p.setAttribute('data-s', m.index);
     p.setAttribute('data-e', m.index + m[0].length);
     box.appendChild(p);
@@ -539,7 +572,7 @@ function renderPassage() {
 function clearMarks() {
   var text = S.ses.passage;
   paras.forEach(function (p) {
-    p.textContent = text.slice(+p.getAttribute('data-s'), +p.getAttribute('data-e'));
+    p.innerHTML = passageHtml(text.slice(+p.getAttribute('data-s'), +p.getAttribute('data-e')));
     p.classList.remove('para-hl');
   });
 }
@@ -548,6 +581,8 @@ function clearMarks() {
 function normMap(text) {
   var out = '', map = [];
   for (var i = 0; i < text.length; i++) {
+    var blank = text.slice(i).match(/^\{\{\d+\}\}/);
+    if (blank) { i += blank[0].length - 1; continue; }
     var c = text[i];
     if (/[‘’‚‛′`´]/.test(c)) c = "'";
     else if (/[“”„‟″«»]/.test(c)) c = '"';
@@ -578,7 +613,7 @@ function highlight(quote, exact, jump) {
   var text = S.ses.passage;
   if (exact && hit.length === 1) {
     var p = hit[0], s = +p.getAttribute('data-s'), e = +p.getAttribute('data-e');
-    p.innerHTML = esc(text.slice(s, r[0])) + '<mark>' + esc(text.slice(r[0], r[1])) + '</mark>' + esc(text.slice(r[1], e));
+    p.innerHTML = passageHtml(text.slice(s, r[0])) + '<mark>' + passageHtml(text.slice(r[0], r[1])) + '</mark>' + passageHtml(text.slice(r[1], e));
   } else {
     hit.forEach(function (p) { p.classList.add('para-hl'); });
   }
@@ -635,7 +670,7 @@ function dotState(q) {
   if (fb.state === 'fix') return fixedNow(q) ? 'answered' : 'retry';
   if (fb.ok1) return 'ok';
   if (fb.ok2) return 'fixed';
-  return fb.empty1 && !fb.wrong.length ? 'skip' : 'bad';
+  return fb.empty1 && !(fb.wrong || []).length ? 'skip' : 'bad';
 }
 
 var DOT_TEXT = { ok: ', đúng', fixed: ', sửa được', bad: ', sai', retry: ', cần sửa', answered: ', đã làm', skip: ', bỏ trống' };
@@ -764,6 +799,7 @@ function feedbackHtml(q) {
     return '<div class="fb neutral"><p>Đã ghi nhận câu trả lời. Đáp án và giải thích sẽ mở sau hạn nộp.</p></div>';
   }
   if (fb.state === 'ok1') return '<div class="fb ok"><p class="head">Vòng 1 em làm đúng câu này.</p></div>';
+  if (fb.state === 'graded') return '<div class="fb neutral"><p>Vòng 1: ' + (fb.ok1 ? 'Đúng' : 'Chưa đúng') + (fb.ok2 != null ? ' · Vòng 2: ' + (fb.ok2 ? 'Đúng' : 'Chưa đúng') : '') + '.</p></div>';
   if (fb.state === 'fix') {
     return '<div class="fb bad">' +
       '<p class="head">' + (fb.empty ? 'Vòng 1 em bỏ trống câu này.' : 'Vòng 1 chưa đúng.') + (fb.label ? ' <span class="chip">' + esc(fb.label) + '</span>' : '') + '</p>' +
@@ -804,6 +840,7 @@ function clearTimers() {
 
 /** Em vừa đổi câu trả lời: lưu tạm lên Sheet sau 0,9 giây để mở lại link vẫn còn. */
 function changed(q) {
+  clearMarks();
   var num = q.num, stage = S.ses.stage, id = S.ses.attemptId;
   clearTimeout(S.timers[num]);
   S.timers[num] = setTimeout(function () {
@@ -827,7 +864,7 @@ function askSubmit() {
     $('btnConfirm').textContent = S.ses.fixRound ? 'Nộp vòng 1' : 'Nộp bài';
   } else {
     var notFixed = S.ses.questions.filter(function (q) { return q.editable && !fixedNow(q); }).length;
-    msg = notFixed ? 'Em chưa sửa ' + notFixed + ' câu. Em vẫn muốn nộp vòng 2?' : 'Nộp vòng 2? Sau đó em sẽ xem đáp án và giải thích.';
+    msg = notFixed ? 'Em chưa sửa ' + notFixed + ' câu. Em vẫn muốn nộp vòng 2?' : 'Nộp vòng 2 để xem kết quả?';
     $('btnConfirm').textContent = 'Nộp vòng 2';
   }
   $('confirmMsg').textContent = msg;
@@ -860,7 +897,7 @@ function renderRound1() {
     '<div class="score"><span class="big">' + r.score + '/' + r.total + '</span><span>điểm vòng 1</span></div>' +
     '<p>Điểm vòng 1 đã được ghi nhận. Có <b>' + fix.length + ' câu</b> chưa đúng: ' +
     fix.map(function (q) { return 'Câu ' + q.label; }).join(', ') + '.</p>' +
-    '<p>Mỗi câu có một gợi ý riêng cho câu trả lời của em. Em sửa lại rồi nộp vòng 2 để xem đáp án và giải thích.</p>' +
+    '<p>Mỗi câu có một gợi ý riêng cho câu trả lời của em. Em sửa lại rồi nộp vòng 2 để xem kết quả.</p>' +
     '<div class="row"><button class="btn primary" data-act="fix">Bắt đầu sửa</button></div>';
   $('report').innerHTML = h + classReturn();
   show('vReport');
@@ -898,8 +935,11 @@ function renderReport() {
     h += '<p>Em đúng hết ngay từ vòng 1. Rất tốt!</p>';
   }
   if (S.ses.kind === 'Luyện lại') h += '<p class="note">Lượt luyện lại không thay đổi điểm chính thức.</p>';
-  h += '<div class="row"><button class="btn ghost" data-act="review">Xem lại bài và giải thích</button>' +
-    (S.ses.canRetake ? '<button class="btn primary" data-act="retake">Làm lại để luyện</button>' : '') + '</div>';
+  if (S.ses.firstPct != null) h += '<p>Điểm chính thức: ' + Math.round(S.ses.firstPct * 100) + '% · cao nhất: ' + Math.round(S.ses.bestPct * 100) + '% · Lần ' + S.ses.attemptNo + '/' + S.ses.maxAttempts + '</p>';
+  h += '<div class="row"><button class="btn ghost" data-act="review">' + (S.ses.revealed ? 'Xem lại bài và giải thích' : 'Xem lại câu đã chọn') + '</button>' +
+    (S.ses.canRetake ? '<button class="btn primary" data-act="retake">Thử lần ' + (S.ses.attemptNo + 1) + ' (còn ' + S.ses.attemptsLeft + ' lần)</button>' : '') +
+    (S.ses.mode === 'Luyện tập' && !S.ses.revealed ? '<button class="btn ghost" data-act="askReveal">Xem đáp án và giải thích</button>' : '') + '</div>' +
+    '<div id="revealConfirm" class="card" hidden><p>Xem đáp án thì em không thử thêm được nữa.</p><button class="btn primary" data-act="reveal">Xem đáp án</button> <button class="btn ghost" data-act="later">Để sau</button></div>';
   $('report').innerHTML = h + classReturn();
   show('vReport');
 }
@@ -967,6 +1007,13 @@ $('report').addEventListener('click', function (ev) {
   if (!b) return;
   var act = b.getAttribute('data-act');
   if (act === 'class') { openClass(); return; }
+  if (act === 'askReveal') { $('revealConfirm').hidden = false; return; }
+  if (act === 'later') { $('revealConfirm').hidden = true; return; }
+  if (act === 'reveal') {
+    b.disabled = true;
+    call('apiReveal', S.ses.attemptId).then(load, function (e) { b.disabled = false; toast(msgOf(e)); });
+    return;
+  }
   if (act === 'review') { S.cur = 0; openQuiz(); }
   else if (act === 'fix') { S.cur = firstOpen(); openQuiz(); }
   else start(true);
