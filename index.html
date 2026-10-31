@@ -191,6 +191,8 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .chart text { fill: currentColor; font: 12px var(--font-ui); }
 .overdue { color: var(--bad); }
 .mode-badge{display:block;padding:12px;margin:10px 0;border-radius:8px;font-size:17px}.mode-badge.practice{background:#d9f4e6;color:#125538}.mode-badge.exam{background:#fff0cc;color:#754000}.opt.eliminated{text-decoration:line-through;opacity:.55}
+
+.w-added, #wDiff ins {background:#d9f6ec;text-decoration:underline;color:#145c43} #wDiff del {background:#ffe0e0;text-decoration:line-through;color:#812323}
 </style>
 
 </head>
@@ -268,6 +270,7 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 
 <div class="toast" id="toast" role="status" hidden></div>
 
+<section id="vWriting" hidden class="card" style="max-width:960px;margin:20px auto;padding:20px"><div id="wContent"></div><p id="wMessage" role="status"></p></section>
 <script>window.API_URL = "https://script.google.com/macros/s/AKfycbwGLJXlBk0FaNWnOvMJJb15OBDoogiy-oAz_j0PCJuHsPMT45JL4sw8Wc60dhn7-UPW/exec";</script>
 <script>
 var G = document.body.getAttribute('data-g') || '';
@@ -290,6 +293,7 @@ function esc(s) {
 }
 function nl(s) { return esc(s).replace(/\n/g, '<br>'); }
 function show(view) {
+  $('vWriting').hidden = view !== 'vWriting';
   ['vLoading', 'vError', 'vStart', 'vQuiz', 'vReport', 'vClass'].forEach(function (v) { $(v).hidden = v !== view; });
   $('dots').hidden = view !== 'vQuiz';
   if (view !== 'vQuiz') $('btnTop').hidden = true;
@@ -389,6 +393,7 @@ function classChart(points) {
   return h + '</svg>';
 }
 function openClass() {
+  if (W.item) { return wFlush().then(function () { clearTimeout(W.timer); clearTimeout(W.poll); W.item = null; openClass(); }, function (e) { toast(msgOf(e)); }); }
   if (C.busy) return;
   C.busy = true;
   var saves = [];
@@ -420,8 +425,9 @@ function renderClass(data) {
     var t = entry.t, status = 'Chưa làm', button = 'Làm bài';
     if (t.status === 'dang') { status = t.stage > 1 ? 'Đang sửa (lần ' + t.stage + ')' : 'Đang làm lần 1'; button = 'Làm tiếp'; }
     if (t.status === 'xong') { status = 'Xong · ' + t.score + '/' + t.total + (t.final != null ? ' (sau sửa ' + t.final + '/' + t.total + ')' : ''); button = 'Xem lại'; }
+    if (t.kind === 'Viết') { status = t.writingStatus + (t.score1 != null ? ' · Lần 1: ' + t.score1 : '') + (t.score2 != null ? ' → Lần 2: ' + t.score2 + ' · Tiến bộ: ' + t.delta : ''); button = 'Mở bài Writing'; }
     h += '<article class="card"><h3>' + esc(t.title) + '</h3><p class="note">' + esc(t.mode) + '</p>' + (t.due ? '<p class="' + (t.dueOver ? 'overdue' : 'note') + '">Hạn nộp: ' + esc(t.due) + (t.dueOver ? ' (đã qua)' : '') + '</p>' : '') + '<p>' + esc(status) + '</p>' +
-      modeBadge(t.mode, t.maxRounds) +
+      (t.kind === 'Viết' ? '<p>Writing · tối đa hai lần</p>' : modeBadge(t.mode, t.maxRounds)) +
       (t.status === 'dang' && t.score != null ? '<p>Điểm chính thức (lần 1): ' + t.score + '/' + t.total + '</p>' : '') +
       (t.maxRounds ? '<p>Đã nộp ' + t.rounds + '/' + t.maxRounds + ' lần' + (t.best != null ? ' · sau lần cuối ' + Math.round(t.best * 100) + '%' : '') + '</p>' : '') +
       '<button class="btn primary" data-g="' + esc(t.g) + '">' + button + '</button>' + '</article>';
@@ -452,6 +458,7 @@ $('classContent').addEventListener('click', function (ev) {
 });
 
 function modeText(i) {
+  if (i.kind === 'Viết') return 'Writing · viết và sửa bài hai lần';
   if (i.mode === 'Kiểm tra') return 'Bài kiểm tra · làm 1 lần, đáp án mở sau hạn';
   return 'Luyện tập · ' + (i.maxRounds || 3) + ' lần';
 }
@@ -460,9 +467,9 @@ function renderStart() {
   var i = S.info;
   $('hTitle').textContent = i.title;
   $('hSub').textContent = 'Lớp ' + i.cls;
-  $('sMode').innerHTML = modeBadge(i.mode, i.maxRounds);
+  $('sMode').innerHTML = i.kind === 'Viết' ? 'Writing · viết và sửa bài hai lần' : modeBadge(i.mode, i.maxRounds);
   $('sTitle').textContent = i.title;
-  var meta = ['<span>Lớp <b>' + esc(i.cls) + '</b> · ' + i.total + ' câu</span>'];
+  var meta = ['<span>Lớp <b>' + esc(i.cls) + '</b>' + (i.kind === 'Viết' ? '' : ' · ' + i.total + ' câu') + '</span>'];
   if (i.due) meta.push('<span>Hạn nộp: <b>' + esc(i.due) + '</b>' + (i.dueOver ? ' (đã qua)' : '') + '</span>');
   $('sMeta').innerHTML = meta.join('');
   var saved = lsGet().name || '';
@@ -505,6 +512,7 @@ function start(wantNew) {
 function copyVal(v) { return Array.isArray(v) ? v.slice() : (v == null ? '' : v); }
 
 function load(ses) {
+  if (ses.kind === 'Viết') { S.ses = null; return wLoad(ses); }
   clearTimers();
   S.ses = ses;
   S.ans = {};
@@ -1043,6 +1051,70 @@ function syncBar() {
 }
 window.addEventListener('resize', syncBar);
 syncBar();
+
+var W = {item:null, timer:null, poll:null, saving:null, dirty:false, activity:0, lastInput:0};
+function wImages(images) { return (images || []).map(function(id) { var url='https://drive.google.com/thumbnail?id='+encodeURIComponent(id)+'&sz=w1600'; return '<a href="'+url+'" target="_blank" rel="noopener"><img style="max-width:100%;max-height:500px" alt="Ảnh đề bài; bấm để phóng to" src="'+url+'"></a>'; }).join(''); }
+function wMarks(text, marks, additions) {
+  var points=[0,text.length]; (marks||[]).forEach(function(m){points.push(m.start,m.end);}); points=points.sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
+  (additions||[]).forEach(function(m){points.push(m.start,m.end);});points=points.sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
+  var h=''; for(var i=0;i<points.length-1;i++){var start=points[i],end=points[i+1], active=[]; (marks||[]).forEach(function(m,k){if(m.start<=start&&m.end>=end)active.push(k);}); var part=esc(text.slice(start,end)); if(active.length){var m=marks[active[0]]; part='<button type="button" class="w-mark" data-wmark="'+active.join(',')+'" style="font:inherit;border:0;padding:0;cursor:pointer;background:'+(m.type==='hay'?'#cef0db':m.type==='mach-lac'?'#ffddb0':'#ffd5d5')+';color:#17202a">'+part+'</button>';} if((additions||[]).some(function(m){return m.start<=start&&m.end>=end;}))part='<ins class="w-added">'+part+'</ins>'; h+=part; } return h;
+}
+function wAdded(before, after) {
+  var a=before.match(/\S+\s*|\s+/g)||[],b=after.match(/\S+\s*|\s+/g)||[],out=[],offset=0,x=0,y=0;
+  if(a.length*b.length>1000000){while(x<a.length&&x<b.length&&a[x]===b[x])offset+=b[x++].length;var tail=0,end=after.length;while(tail<a.length-x&&tail<b.length-x&&a[a.length-1-tail]===b[b.length-1-tail])end-=b[b.length-1-tail++].length;return end>offset?[{start:offset,end:end}]:[];}
+  var dp=Array(a.length+1);for(var i=0;i<=a.length;i++)dp[i]=new Uint16Array(b.length+1);
+  for(i=a.length-1;i>=0;i--)for(var j=b.length-1;j>=0;j--)dp[i][j]=a[i]===b[j]?1+dp[i+1][j+1]:Math.max(dp[i+1][j],dp[i][j+1]);
+  while(x<a.length||y<b.length){if(x<a.length&&y<b.length&&a[x]===b[y]){offset+=b[y++].length;x++;}else if(y<b.length&&(x===a.length||dp[x][y+1]>=dp[x+1][y])){var end=offset+b[y++].length;if(out.length&&out[out.length-1].end===offset)out[out.length-1].end=end;else out.push({start:offset,end:end});offset=end;}else x++;}return out;
+}
+function wDiff(before, after) {
+  var a=before.match(/\S+\s*|\s+/g)||[], b=after.match(/\S+\s*|\s+/g)||[];
+  if(a.length*b.length>1000000) {var p=0;while(p<a.length&&p<b.length&&a[p]===b[p])p++; var tail=0;while(tail<a.length-p&&tail<b.length-p&&a[a.length-1-tail]===b[b.length-1-tail])tail++;return esc(a.slice(0,p).join(''))+'<del>'+esc(a.slice(p,a.length-tail).join(''))+'</del><ins>'+esc(b.slice(p,b.length-tail).join(''))+'</ins>'+esc(b.slice(b.length-tail).join(''));}
+  var dp=Array(a.length+1);for(var i=0;i<=a.length;i++)dp[i]=new Uint16Array(b.length+1);
+  for(i=a.length-1;i>=0;i--)for(var j=b.length-1;j>=0;j--)dp[i][j]=a[i]===b[j]?1+dp[i+1][j+1]:Math.max(dp[i+1][j],dp[i][j+1]);
+  var h='',x=0,y=0;while(x<a.length||y<b.length){if(x<a.length&&y<b.length&&a[x]===b[y])h+=esc(a[x++]),y++;else if(y<b.length&&(x===a.length||dp[x][y+1]>=dp[x+1][y]))h+='<ins>'+esc(b[y++])+'</ins>';else h+='<del>'+esc(a[x++])+'</del>';}return h;
+}
+function wLoad(item) {
+  clearTimeout(W.timer); clearTimeout(W.poll); W.item=item; W.dirty=false; W.activity=0; W.lastInput=0;
+  $('hTitle').textContent=item.title; $('hSub').textContent=item.name+' · Lần '+item.attempt;
+  var w=item.writing, h='<h1>'+esc(item.title)+'</h1><div style="white-space:pre-wrap">'+esc(w.prompt)+'</div>'+wImages(w.images)+'<p>'+esc(w.exam+' · '+w.task)+' · '+w.min+(w.max?'–'+w.max:' trở lên')+' từ · Gợi ý '+w.minutes+' phút</p>';
+  if(item.status==='Đang viết') {
+    h+='<label for="wText">Bài viết của em</label><textarea id="wText" style="display:block;width:100%;min-height:420px;font:inherit;line-height:1.7;box-sizing:border-box"></textarea><p id="wCount"></p><button class="btn primary" data-wact="ask">Nộp bài</button><div id="wConfirm" hidden><p id="wWarning"></p><button class="btn primary" data-wact="submit">Xác nhận nộp</button> <button class="btn ghost" data-wact="cancel">Viết tiếp</button></div>';
+  } else if(item.result) {
+    var r=item.result;h+='<h2>Kết quả: '+r.tong+(w.scale==='Cambridge'?'/20':' band')+'</h2><ul>'+Object.keys(r.diem).map(function(k){return '<li>'+esc(k)+': '+r.diem[k]+'</li>';}).join('')+'</ul><p>'+esc(r.nhan_xet_chung)+'</p><p>Đỏ: lỗi · Cam: mạch lạc/bố cục · Xanh: chỗ hay. Bấm chỗ tô để xem nhận xét.</p><div style="white-space:pre-wrap;line-height:2">'+wMarks(item.text,r.cho_to,item.attempt===2?wAdded(item.previous.text,item.text):[])+'</div><div id="wComment" role="status"></div>';
+    if(item.attempt===1)h+='<button class="btn primary" data-wact="second">Viết lần 2</button>';
+    else {h+='<h3>Lần 1: '+item.previous.score+' · Lần 2: '+r.tong+' · Tiến bộ: '+Math.round((r.tong-item.previous.score)*100)/100+'</h3><p>'+esc(r.thay_doi)+'</p><h3>Lỗi đã sửa</h3><p>'+esc((r.loi_da_sua||[]).join('\n'))+'</p><h3>Lỗi chưa sửa</h3><p>'+esc((r.loi_chua_sua||[]).join('\n'))+'</p><button class="btn ghost" data-wact="diff">Xem thay đổi</button><div id="wDiff" hidden style="white-space:pre-wrap;line-height:2">'+wDiff(item.previous.text,item.text)+'</div>';}
+  } else h+='<h2>'+esc(item.attempt===2?'Lần 2 chờ AI':'Đang chờ chấm')+'</h2><button class="btn ghost" data-wact="refresh">Tải lại kết quả</button>';
+  h+=(LOP?'<button class="btn ghost" data-wact="back">Về danh sách bài</button>':'');
+  $('wContent').innerHTML=h; $('wMessage').textContent='';show('vWriting');
+  if(item.status!=='Đang viết' && !item.result)W.poll=setTimeout(wPoll,15000);
+  if(item.status==='Đang viết'){$('wText').value=item.text; wCount();$('wText').addEventListener('input',function(){var now=Date.now(); if(W.lastInput&&now-W.lastInput<=120000)W.activity+=now-W.lastInput; W.lastInput=now;W.dirty=true;wCount();if(!W.timer)W.timer=setTimeout(wAutoSave,5000);});}
+}
+function wPoll(){
+  if(!W.item||W.item.status==='Đang viết'||W.item.result)return;
+  var id=W.item.id;call('apiWRead',id).then(function(item){if(!W.item||W.item.id!==id)return;if(item.result)wLoad(item);else W.poll=setTimeout(wPoll,15000);},function(){if(W.item&&W.item.id===id)W.poll=setTimeout(wPoll,15000);});
+}
+function wCount(){var text=$('wText').value, n=text.trim()?text.trim().split(/\s+/).length:0;$('wCount').textContent=n+' từ';$('wCount').style.color=n<W.item.writing.min?'#bd2222':'';}
+function wAutoSave(){W.timer=null;wFlush().catch(function(e){$('wMessage').textContent=msgOf(e);}).then(function(){if(W.item&&W.dirty&&!W.timer)W.timer=setTimeout(wAutoSave,5000);});}
+function wFlush(){
+  if(W.saving)return W.saving.then(wFlush);
+  if(!W.item||W.item.status!=='Đang viết'||!W.dirty)return Promise.resolve();
+  var text=$('wText').value, activity=W.activity, id=W.item.id; W.dirty=false;W.activity=0;
+  W.saving=call('apiWSave',id,text,activity).then(function(){ $('wMessage').textContent='Đã lưu'; },function(e){W.dirty=true;W.activity+=activity;throw e;}).then(function(){W.saving=null;},function(e){W.saving=null;throw e;});return W.saving;
+}
+$('wContent').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b||!W.item)return;
+  if(b.hasAttribute('data-wmark')){var marks=W.item.result.cho_to; $('wComment').textContent=b.getAttribute('data-wmark').split(',').map(function(i){var m=marks[+i];return (m.cat||m.type)+': '+m.comment+(m.fix?' · Gợi ý: '+m.fix:'');}).join('\n');return;}
+  var act=b.getAttribute('data-wact');
+  if(act==='back')return openClass();
+  if(act==='ask'){$('wConfirm').hidden=false;$('wWarning').textContent=($('wText').value.trim().split(/\s+/).length<W.item.writing.min?'Bài chưa đủ số từ. Em vẫn có thể nộp. ':'')+'Nộp xong em sẽ chờ nhận xét. Em xác nhận nộp nhé?';return;}
+  if(act==='cancel'){$('wConfirm').hidden=true;return;}
+  if(act==='diff'){$('wDiff').hidden=!$('wDiff').hidden;return;}
+  b.disabled=true;
+  var operation=act==='submit'?wFlush().then(function(){ $('wText').disabled=true;return call('apiWSubmit',W.item.id,$('wText').value,W.activity); }):act==='second'?call('apiWStart',W.item.g,S.name||C.name,S.pin||C.pin,true):act==='refresh'?call('apiWRead',W.item.id):Promise.resolve(null);
+  operation.then(function(item){if(item)wLoad(item);},function(err){$('wMessage').textContent=msgOf(err);if(act==='submit')$('wText').disabled=false;}).then(function(){b.disabled=false;});
+});
+window.addEventListener('beforeunload',function(e){if(W.dirty||W.saving){e.preventDefault();e.returnValue='';}});
+
 init();
 </script>
 </body>
