@@ -214,13 +214,17 @@ textarea { min-height: 100px; }
 .chart-key { display: flex; flex-wrap: wrap; gap: 16px; font-size: 14px; }
 .chart-key span { color: var(--accent); }
 .chart-key span:last-child { color: var(--ok); }
+
+[hidden] {display:none!important} input,select {font:inherit;max-width:100%;padding:8px} #accountForm label {display:block;margin:12px 0} #gradeText .w-mark {display:inline;text-align:inherit;white-space:pre-wrap}
 </style>
 
 </head>
 <body>
 <header class="bar"><div class="brand"><b>Theo dõi lớp</b><span id="updated"></span></div><button id="classesBtn" class="btn ghost small" hidden>Chọn lớp</button><button id="reloadBtn" class="btn ghost small" hidden>Tải lại</button><button id="logoutBtn" class="link" hidden>Đăng xuất</button></header>
 <main>
-<section class="center" id="login"><form class="card" id="loginForm"><h1 class="title">Theo dõi lớp</h1><label class="f" for="passcode">Mật khẩu của cô<input id="passcode" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="current-password" required></label><button class="btn primary" id="loginBtn">Vào</button></form></section>
+<section class="center" id="login"><form class="card" id="loginForm"><h1 class="title">Trang giáo viên</h1><label class="f" for="username">Tên đăng nhập<input id="username" value="co" autocomplete="username"></label><label class="f" for="passcode">Mật khẩu<input id="passcode" type="password" autocomplete="current-password" required></label><p>Lần đầu: tên đăng nhập co, mật khẩu theo dõi hiện tại của cô.</p><button class="btn primary" id="loginBtn">Vào</button></form></section>
+<nav id="staffNav" hidden style="padding:16px;gap:12px;flex-wrap:wrap"><button id="navTrack" class="btn ghost">Theo dõi lớp</button><button id="navWriting" class="btn ghost">Chấm writing</button><button id="navAccounts" class="btn ghost">Tài khoản</button></nav>
+<section id="staffPanel" hidden class="dashboard"></section>
 <div class="dashboard"><p id="message" role="status" hidden></p><div id="content" hidden></div><section class="card" id="studentDetail" hidden tabindex="-1"></section><section class="card" id="copyFallback" hidden><label class="f" for="copyText">Chữ đã được chọn. Cô nhấn giữ hoặc Ctrl+C để copy.<textarea id="copyText" readonly></textarea></label><button class="btn ghost small" id="closeCopy">Đóng</button></section></div>
 </main>
 <script>window.API_URL = "https://script.google.com/macros/s/AKfycbwGLJXlBk0FaNWnOvMJJb15OBDoogiy-oAz_j0PCJuHsPMT45JL4sw8Wc60dhn7-UPW/exec";</script>
@@ -235,7 +239,7 @@ function call(fn) {
   var args = Array.prototype.slice.call(arguments, 1);
   return new Promise(function (resolve, reject) {
     var tries = 0;
-    function success(res) { if (res && res.error) { var e = new Error(res.error); e.user = true; reject(e); } else resolve(res); }
+    function success(res) { if (res && res.error) { var e = new Error(res.error); e.user = true; if (e.message.indexOf('Phiên đã hết hạn') >= 0) { logout(); message(e.message); } reject(e); } else resolve(res); }
     function failure(e) { tries++; if (tries < 3) setTimeout(go, 1200 * tries); else reject(e); }
     function go() {
       fetch(window.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn: fn, args: args }), credentials: 'omit', redirect: 'follow' }).then(function (r) { return r.json(); }).then(success, failure);
@@ -250,10 +254,10 @@ function fetchClass(cls, restoring) {
   if (D.busy) return;
   busy(true); message('Đang tải dữ liệu…');
   var version = D.version;
-  return call('apiDashboard', D.pass, cls).then(function (data) {
+  return call('apiDashboard', D.pass, cls, !!D.includeArchived).then(function (data) {
     if (version !== D.version) return;
     D.cls = data.cls || ''; D.data = data;
-    remember('reading-teacher-pass', D.pass); if (D.cls) remember('reading-teacher-class', D.cls);
+    if (D.cls) remember('reading-teacher-class', D.cls);
     $('login').hidden = true; $('content').hidden = false; $('studentDetail').hidden = true;
     ['classesBtn', 'reloadBtn', 'logoutBtn'].forEach(function (id) { $(id).hidden = false; });
     $('updated').textContent = 'Cập nhật lúc ' + new Date().toLocaleString('vi-VN');
@@ -266,6 +270,8 @@ function fetchClass(cls, restoring) {
   }).then(function () { if (version === D.version) busy(false); });
 }
 function logout() {
+  if (D.pass) call('apiLogout', D.pass).catch(function () {});
+  D.session = null; remember('reading-teacher-session', ''); $('staffNav').hidden = true; $('staffPanel').hidden = true; $('staffPanel').innerHTML = ''; DW.item = null;
   D.version++; D.pass = ''; D.cls = ''; D.data = null; busy(false);
   remember('reading-teacher-pass', ''); remember('reading-teacher-class', '');
   $('passcode').value = ''; $('login').hidden = false; $('content').hidden = true; $('content').innerHTML = '';
@@ -293,14 +299,14 @@ function chart(tests, firstKey, finalKey) {
 }
 function section(title, body) { return '<section class="card"><h2>' + esc(title) + '</h2>' + body + '</section>'; }
 function scoreClass(c) { return c.pct == null ? 'empty' + (c.status === 'dang' ? ' doing' : '') : c.pct >= 0.8 ? 'high' : c.pct >= 0.6 ? 'good' : c.pct >= 0.4 ? 'mid' : 'low'; }
-function cellText(c) { return c.pct == null ? (c.status === 'dang' ? 'Đang làm' : 'Chưa làm') : pct(c.pct); }
+function cellText(c) { if (c.kind === 'Viết') return 'Lần 1: ' + (c.score1 == null ? '—' : c.score1) + '<br>Lần 2: ' + (c.score2 == null ? '—' : c.score2) + (c.delta != null ? '<br>Tiến bộ: ' + c.delta : ''); return c.pct == null ? (c.status === 'dang' ? 'Đang làm' : 'Chưa làm') : pct(c.pct); }
 function render(d) {
   var h = '';
   if (!d.cls) {
-    h = '<h1 class="title">Chọn lớp</h1><div class="cards" style="margin-top:20px">' + d.classes.map(function (c, i) {
-      return '<article class="card"><h2>' + esc(c.cls) + '</h2><p>' + c.students + ' em · ' + c.tests + ' bài đã giao</p><button class="btn primary" data-cls="' + i + '">Xem lớp</button><a href="' + esc(c.link) + '" target="_blank" rel="noopener">' + esc(c.link) + '</a><button class="btn ghost small" data-copy-class="' + i + '">Copy link lớp</button></article>';
+    h = '<h1 class="title">Chọn lớp</h1><label><input type="checkbox" data-archived ' + (D.includeArchived ? 'checked' : '') + '> Xem cả lớp đã lưu trữ</label><div class="cards" style="margin-top:20px">' + d.classes.map(function (c, i) {
+      return '<article class="card"><h2>' + esc(c.cls) + '</h2><p>' + (c.students == null ? '' : c.students + ' em · ') + c.tests + ' bài đã giao · ' + esc(c.status || 'Đang học') + '</p><button class="btn primary" data-cls="' + i + '">Xem lớp</button><a href="' + esc(c.link) + '" target="_blank" rel="noopener">' + esc(c.link) + '</a><button class="btn ghost small" data-copy-class="' + i + '">Copy link lớp</button>' + (c.fileUrl ? '<p><a href="' + esc(c.fileUrl) + '" target="_blank" rel="noopener">Mở file lớp</a></p>' : '') + '</article>';
     }).join('') + '</div>';
-    if (!d.classes.length) h += '<p>Cô chưa có lớp nào. Thêm danh sách em vào trang Lớp trong Sheet nhé.</p>';
+    if (!d.classes.length) h += '<p>Cô chưa có lớp nào. Thêm lớp trong file chính, rồi nhập học sinh trong file lớp nhé.</p>';
     $('content').innerHTML = h; return;
   }
   var last = d.tests.length ? d.tests[d.tests.length - 1] : null;
@@ -333,12 +339,15 @@ function copyText(text) {
   function fallback() { $('copyFallback').hidden = false; $('copyText').value = text; $('copyText').focus(); $('copyText').select(); $('copyFallback').scrollIntoView({ block: 'center' }); }
   if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(function () { message('Đã copy. Cô có thể dán vào Zalo.'); }, fallback); } else fallback();
 }
-$('loginForm').addEventListener('submit', function (e) { e.preventDefault(); D.pass = $('passcode').value.trim(); fetchClass(recalled('reading-teacher-class'), true); });
+$('loginForm').addEventListener('submit', function (e) { e.preventDefault(); if (D.busy) return; busy(true); call('apiLogin', $('username').value.trim(), $('passcode').value).then(staffEnter, function (err) { message(msgOf(err)); }).then(function () { busy(false); }); });
 $('logoutBtn').addEventListener('click', logout);
-$('classesBtn').addEventListener('click', function () { fetchClass(''); });
-$('reloadBtn').addEventListener('click', function () { fetchClass(D.cls); });
+$('classesBtn').addEventListener('click', function () { if (D.page === 'writing') writingList(); else fetchClass(''); });
+$('reloadBtn').addEventListener('click', function () { if (D.page === 'writing') writingList(); else if (D.page === 'accounts') accountsView(); else fetchClass(D.cls); });
 $('closeCopy').addEventListener('click', function () { $('copyFallback').hidden = true; });
 $('studentDetail').addEventListener('click', function (e) { if (e.target.id === 'closeStudent') $('studentDetail').hidden = true; });
+$('content').addEventListener('change', function (e) {
+  if (e.target.hasAttribute('data-archived') && !D.busy) { D.includeArchived = e.target.checked; fetchClass(''); }
+});
 $('content').addEventListener('click', function (e) {
   var b = e.target.closest('button'); if (!b || D.busy) return;
   if (b.hasAttribute('data-cls')) fetchClass(D.data.classes[+b.getAttribute('data-cls')].cls);
@@ -347,8 +356,95 @@ $('content').addEventListener('click', function (e) {
   else if (b.hasAttribute('data-copy-names')) { var t = D.data.notDone[+b.getAttribute('data-copy-names')]; copyText(t.title + '\nCác em chưa làm:\n' + t.names.join('\n')); }
   else if (b.hasAttribute('data-student')) showStudent(+b.getAttribute('data-student'));
 });
-D.pass = recalled('reading-teacher-pass');
-if (D.pass) fetchClass(recalled('reading-teacher-class'), true);
+function wImages(images) { return (images || []).map(function(id) { var url='https://drive.google.com/thumbnail?id='+encodeURIComponent(id)+'&sz=w1600'; return '<a href="'+url+'" target="_blank" rel="noopener"><img style="max-width:100%;max-height:500px" alt="Ảnh đề bài; bấm để phóng to" src="'+url+'"></a>'; }).join(''); }
+function wMarks(text, marks) {
+  var points=[0,text.length]; (marks||[]).forEach(function(m){points.push(m.start,m.end);}); points=points.sort(function(a,b){return a-b;}).filter(function(n,i,a){return i===0||n!==a[i-1];});
+  var h=''; for(var i=0;i<points.length-1;i++){var start=points[i],end=points[i+1], active=[]; (marks||[]).forEach(function(m,k){if(m.start<=start&&m.end>=end)active.push(k);}); var part=esc(text.slice(start,end)); if(active.length){var m=marks[active[0]]; part='<button type="button" class="w-mark" data-wmark="'+active.join(',')+'" style="font:inherit;border:0;padding:0;cursor:pointer;background:'+(m.type==='hay'?'#cef0db':m.type==='mach-lac'?'#ffddb0':'#ffd5d5')+';color:#17202a">'+part+'</button>';} h+=part; } return h;
+}
+
+var DW={items:[],item:null,grade:null,filter:{},mark:null};
+function staffEnter(session) {
+  D.session=session;D.pass=session.token;D.busy=false;remember('reading-teacher-session',JSON.stringify(session));remember('reading-teacher-pass','');$('passcode').value='';
+  $('login').hidden=true;$('staffNav').hidden=false;$('logoutBtn').hidden=false;$('reloadBtn').hidden=false;
+  $('navTrack').hidden=session.role!=='Giáo viên';$('navAccounts').hidden=session.role!=='Giáo viên';
+  if(session.role==='Giáo viên')staffTrack();else writingList();
+}
+function staffPage(page){D.page=page;$('studentDetail').hidden=true;$('content').hidden=page!=='track';$('staffPanel').hidden=page==='track';message('');}
+function staffTrack(){staffPage('track');fetchClass(D.cls);}
+$('navTrack').addEventListener('click',staffTrack);
+$('navWriting').addEventListener('click',function(){writingList();});
+$('navAccounts').addEventListener('click',accountsView);
+function writingList(){
+  staffPage('writing');var version=D.version;message('Đang tải bài viết…');
+  return call('apiWList',D.pass,DW.filter).then(function(data){
+    if(version!==D.version)return;
+    DW.items=data.items;DW.item=null;message('');
+    var tasks=[];data.items.forEach(function(item){if(!tasks.some(function(t){return t.g===item.g;}))tasks.push(item);});
+    var h='<section class="card"><h1>Chấm writing</h1><p>'+data.pending+' bài đang chờ</p><label>Lớp <select id="wClass"><option value="">Mọi lớp được giao</option>'+data.classes.map(function(c){return '<option'+(c===DW.filter.cls?' selected':'')+'>'+esc(c)+'</option>';}).join('')+'</select></label> <label>Bài <select id="wTask"><option value="">Mọi bài</option>'+tasks.map(function(t){return '<option value="'+esc(t.g)+'"'+(t.g===DW.filter.g?' selected':'')+'>'+esc(t.title)+'</option>';}).join('')+'</select></label> <label>Trạng thái <select id="wStatus"><option value="">Tất cả</option>'+['Chờ AI','Chờ chấm','Đã trả'].map(function(st){return '<option'+(st===DW.filter.status?' selected':'')+'>'+st+'</option>';}).join('')+'</select></label><button class="btn ghost" data-dw="filter">Lọc</button></section>';
+    h+=data.items.map(function(item,i){return '<article class="card"><h2>'+esc(item.title)+'</h2><p>'+esc(item.cls+' · '+item.name+' · Lần '+item.attempt+' · '+item.status)+'</p><button class="btn primary" data-wopen="'+i+'">Mở bài</button></article>';}).join('');
+    $('staffPanel').innerHTML=h+(!data.items.length?'<p>Không có bài phù hợp.</p>':'');
+  },function(e){message(msgOf(e));});
+}
+function wCriteria(w){return w.scale==='IELTS'?[w.task==='Task 1'?'Task Achievement':'Task Response','Coherence & Cohesion','Lexical Resource','Grammatical Range & Accuracy']:['Content','Communicative Achievement','Organisation','Language'];}
+function writingOpen(i){
+  DW.item=DW.items[i];var item=DW.item,r=item.grade||item.ai||{diem:{},nhan_xet_chung:'',cho_to:[]};DW.grade=JSON.parse(JSON.stringify(r));DW.mark=null;DW.selection=null;
+  var readOnly=item.attempt===2||item.status==='Đã trả'&&D.session.role!=='Giáo viên';
+  var h='<section class="card"><button class="btn ghost" data-dw="list">Danh sách bài</button><h1>'+esc(item.name+' · '+item.title+' · Lần '+item.attempt)+'</h1><div style="white-space:pre-wrap">'+esc(item.writing.prompt)+'</div>'+wImages(item.writing.images)+'<p>Ghi chú chấm: '+esc(item.notes)+'</p><p>'+item.words+' từ · '+Number(item.minutes).toFixed(1)+' phút viết · '+esc(item.status)+' · Người chấm: '+esc(item.grader)+'</p>'+(item.ai&&!item.grade?'<p>AI gợi ý — cô/trợ giảng kiểm tra trước khi trả.</p>':'')+'<div id="gradeText" style="white-space:pre-wrap;line-height:2;user-select:text;padding:16px;border:1px solid var(--line)">'+wMarks(item.text,r.cho_to)+'</div><p>Đỏ: lỗi · Cam: mạch lạc/bố cục · Xanh: chỗ hay.</p>';
+  if(!readOnly){
+    h+='<button class="btn ghost" data-dw="select">Tô đoạn đang bôi đen</button><div id="markEditor" hidden><label>Loại <select id="markCat"><option value="loi|Ngữ pháp">Lỗi ngữ pháp</option><option value="loi|Từ vựng">Lỗi từ vựng</option><option value="loi|Chính tả">Lỗi chính tả</option><option value="loi|Dấu câu">Lỗi dấu câu</option><option value="mach-lac|Mạch lạc/bố cục">Mạch lạc/bố cục</option><option value="hay|Chỗ hay">Chỗ hay</option></select></label><p id="markQuote"></p><label>Nhận xét<textarea id="markComment"></textarea></label><label>Gợi ý sửa<textarea id="markFix"></textarea></label><button class="btn primary" data-dw="markSave">Lưu chỗ tô</button><button class="btn ghost" data-dw="markDelete">Xóa chỗ tô</button></div>';
+    h+=wCriteria(item.writing).map(function(k,i){return '<label style="display:block;margin:12px 0">'+esc(k)+' <input id="grade'+i+'" type="number" min="0" max="'+(item.writing.scale==='IELTS'?9:5)+'" step="'+(item.writing.scale==='IELTS'?'.5':'1')+'" value="'+(r.diem[k]==null?'':r.diem[k])+'"></label>';}).join('')+'<label>Nhận xét chung<textarea id="gradeComment"></textarea></label><button class="btn ghost" data-dw="draft">Lưu nháp</button> <button class="btn primary" data-dw="release">Trả bài</button>';
+  }else h+='<p>Điểm: '+(r.tong==null?'Chưa có':r.tong)+'</p><p>'+esc(r.nhan_xet_chung)+'</p><div id="markRead" role="status"></div>';
+  $('staffPanel').innerHTML=h+'</section>';if(!readOnly)$('gradeComment').value=r.nhan_xet_chung||'';
+  if(!readOnly) { $('gradeText').addEventListener('mouseup',wCaptureSelection);$('gradeText').addEventListener('touchend',function(){setTimeout(wCaptureSelection,50);}); }
+}
+function wCaptureSelection(){
+  var selection=window.getSelection();if(!selection||!selection.rangeCount||selection.isCollapsed)return;
+  var range=selection.getRangeAt(0),root=$('gradeText');if(!root.contains(range.startContainer)||!root.contains(range.endContainer))return;
+  var prefix=range.cloneRange();prefix.selectNodeContents(root);prefix.setEnd(range.startContainer,range.startOffset);
+  var start=prefix.toString().length,end=start+range.toString().length,quote=DW.item.text.slice(start,end);
+  if(quote!==range.toString())return;DW.selection={start:start,end:end,quote:quote};
+}
+if(document.addEventListener)document.addEventListener('selectionchange',function(){if(DW.item&&D.page==='writing')wCaptureSelection();});
+function markEdit(index){
+  var mark=index==null?DW.selection:DW.grade.cho_to[index];if(!mark){message('Cô bôi đen một đoạn trong bài trước nhé.');return;}
+  DW.mark={index:index,start:mark.start,end:mark.end,quote:mark.quote};$('markEditor').hidden=false;$('markQuote').textContent=mark.quote;$('markComment').value=mark.comment||'';$('markFix').value=mark.fix||'';$('markCat').value=(mark.type||'loi')+'|'+(mark.cat||'Ngữ pháp');
+}
+var accountPassword='';
+function accountResult(data){
+  if(data.password!==undefined){accountPassword=data.password;$('accountSecret').hidden=false;$('accountSecretValue').textContent=data.password;}
+}
+function accountAction(op,user){
+  return call('apiAccounts',D.pass,{op:op,user:user}).then(function(data){return accountsView(data).then(function(){accountResult(data);});},function(err){message(msgOf(err));});
+}
+function accountsView(result){staffPage('accounts');accountPassword='';var version=D.version;return (result&&result.accounts?Promise.resolve(result):call('apiAccounts',D.pass)).then(function(data){if(version!==D.version)return;
+  $('staffPanel').innerHTML='<section class="card"><h1>Tài khoản</h1><p>Mật khẩu trợ giảng gồm 6 số do hệ thống tạo. Khóa do nhập sai tự mở sau 15 phút hoặc cô mở ngay.</p>'+data.accounts.map(function(a){return '<article><p>'+esc(a.user+' · '+a.name+' · '+a.role+' · '+a.classes.join(', ')+' · '+(a.locked?'Đang khóa':'Hoạt động')+' · Sai '+a.failedAttempts+' lần')+'</p><button class="btn" data-account-op="moKhoa" data-account-user="'+esc(a.user)+'">Mở khóa</button> <button class="btn" data-account-op="xem" data-account-user="'+esc(a.user)+'">Xem mật khẩu</button> <button class="btn" data-account-op="datLai" data-account-user="'+esc(a.user)+'">Đặt lại mật khẩu</button></article>';}).join('')+'<div id="accountSecret" hidden><p>Mật khẩu: <strong id="accountSecretValue"></strong></p><button class="btn" data-account-copy>Chép mật khẩu</button></div><form id="accountForm"><label>Tên đăng nhập<input id="accountUser" required autocomplete="off"></label><label>Họ tên<input id="accountName"></label><label>Vai trò<select id="accountRole"><option>Trợ giảng</option><option>Giáo viên</option></select></label><label>Lớp phụ trách (phân cách dấu phẩy; bỏ trống để giữ khi cập nhật)<input id="accountClasses"></label><label>Mật khẩu mới (chỉ giáo viên; trợ giảng do hệ thống tạo)<input id="accountPass" type="password" autocomplete="new-password"></label><label>Thao tác<select id="accountOp"><option value="tao">Tạo mới</option><option value="doiMatKhau">Đổi mật khẩu</option><option value="khoa">Khóa</option><option value="mo">Mở / giao lại lớp</option></select></label><button class="btn primary">Lưu tài khoản</button></form></section>';
+  $('accountForm').addEventListener('submit',function(e){e.preventDefault();var change={op:$('accountOp').value,user:$('accountUser').value,name:$('accountName').value,role:$('accountRole').value,pass:$('accountPass').value};if($('accountClasses').value||change.op==='tao')change.classes=$('accountClasses').value;call('apiAccounts',D.pass,change).then(function(data){return accountsView(data).then(function(){accountResult(data);});},function(err){message(msgOf(err));});});
+},function(e){message(msgOf(e));});}
+$('staffPanel').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  if(b.hasAttribute('data-account-copy'))return copyText(accountPassword);
+  if(b.hasAttribute('data-account-op'))return accountAction(b.getAttribute('data-account-op'),b.getAttribute('data-account-user'));
+  if(b.hasAttribute('data-wopen'))return writingOpen(+b.getAttribute('data-wopen'));
+  if(b.hasAttribute('data-wmark')){var ix=+b.getAttribute('data-wmark').split(',')[0];if($('markEditor'))markEdit(ix);else {var mark=DW.grade.cho_to[ix];$('markRead').textContent=mark.comment+' · '+mark.fix;}return;}
+  var act=b.getAttribute('data-dw');
+  if(act==='filter'){DW.filter={cls:$('wClass').value,g:$('wTask').value,status:$('wStatus').value};return writingList();}
+  if(act==='list')return writingList();
+  if(act==='select')return markEdit(null);
+  if(act==='markSave'||act==='markDelete'){
+    if(!DW.mark)return;var mark=DW.mark;
+    if(act==='markDelete'){if(mark.index!=null)DW.grade.cho_to.splice(mark.index,1);}
+    else {var cat=$('markCat').value.split('|'),m={start:mark.start,end:mark.end,quote:mark.quote,type:cat[0],cat:cat[1],comment:$('markComment').value,fix:$('markFix').value};if(mark.index==null)DW.grade.cho_to.push(m);else DW.grade.cho_to[mark.index]=m;}
+    $('gradeText').innerHTML=wMarks(DW.item.text,DW.grade.cho_to);$('markEditor').hidden=true;DW.mark=null;return;
+  }
+  if(act==='draft'||act==='release'){
+    var valid=true;wCriteria(DW.item.writing).forEach(function(k,i){var value=$('grade'+i).value;if(value==='')valid=false;DW.grade.diem[k]=Number(value);});if(!valid){message('Cô điền đủ bốn điểm tiêu chí nhé.');return;}
+    DW.grade.nhan_xet_chung=$('gradeComment').value;b.disabled=true;
+    call('apiWGrade',D.pass,DW.item.id,DW.grade,act==='release').then(function(){message(act==='release'?'Đã trả bài.':'Đã lưu nháp.');return writingList();},function(err){message(msgOf(err));}).then(function(){b.disabled=false;});
+  }
+});
+remember('reading-teacher-pass','');
+try { var savedSession=JSON.parse(recalled('reading-teacher-session')||'null');if(savedSession&&savedSession.token)staffEnter(savedSession); } catch(e) { remember('reading-teacher-session',''); }
+
 </script>
 </body>
 </html>
