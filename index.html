@@ -805,7 +805,7 @@ function updateCount(q) {
   var el = $('wc');
   var g = groupOf(q);
   if (!el || !g || !g.limit) return;
-  var n = String(S.ans[q.num] || '').trim().split(/\s+/).filter(Boolean).length;
+  var n = String(S.ans[q.num] || '').trim().replace(/([\p{L}\p{N}])\s*-\s*(?=[\p{L}\p{N}])/gu, '$1-').split(/\s+/).filter(Boolean).length;
   var over = n > g.limit.max || (n > 0 && n < g.limit.min);
   el.textContent = 'Giới hạn: ' + g.limitText + ' · em đang viết ' + n + ' từ';
   el.className = 'count' + (over ? ' over' : '');
