@@ -179,6 +179,11 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .txtwrap { display: flex; flex-direction: column; gap: 6px; }
 .txtwrap input { font-size: 17px; padding: 14px; }
 .txtwrap input:disabled { opacity: 0.8; }
+.transform-sentence { line-height: 3; overflow-wrap: anywhere; }
+.transform-sentence input { display: inline-block; min-width: 11ch; vertical-align: middle; }
+.extra-hint { background: #fff3d9; }
+.half-ok { background: #d9f3e3; border-radius: 4px; padding: 2px 3px; }
+.half-bad { background: #fbe3e1; border-radius: 4px; padding: 2px 3px; }
 .count { font-size: 13.5px; color: var(--muted); }
 .count.over { color: var(--bad); font-weight: 600; }
 .prev { font-size: 14.5px; color: var(--bad); }
@@ -650,7 +655,7 @@ function setTab(t) {
 // ---------------------------------------------------------------- Câu hỏi
 
 function cur() { return S.ses.questions[S.cur]; }
-function isText(q) { return q.type === 'gap' || q.type === 'transform'; }
+function isText(q) { return ['gap', 'transform', 'wordform'].indexOf(q.type) >= 0; }
 function groupOf(q) { return q.group >= 0 ? S.ses.groups[q.group] : null; }
 
 function answered(q) {
@@ -718,7 +723,7 @@ function blankHtml(s) {
 function qTextHtml(q) {
   var lines = String(q.text || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
   if (q.type === 'transform' && lines.length >= 3) {
-    return '<p>' + blankHtml(lines[0]) + '</p><p class="kw">' + blankHtml(lines[1]) + '</p><p>' + blankHtml(lines.slice(2).join(' ')) + '</p>';
+    return '<p>' + blankHtml(lines[0]) + '</p><p class="kw">' + blankHtml(lines[1]) + '</p>';
   }
   return '<p>' + lines.map(blankHtml).join('<br>') + '</p>';
 }
@@ -754,12 +759,33 @@ function renderAnswer(q) {
   var box = $('answerBox');
   var fb = q.fb;
   var editable = q.editable && S.ses.stage !== 4;
+  if (q.type === 'extra') {
+    var val = String(S.ans[q.num] || '');
+    var seen = {};
+    var words = String(q.text || '').split(/\s+/).filter(Boolean);
+    box.innerHTML = '<div class="extra-line">' + words.map(function (word, index) {
+      var clean = word.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '').toLowerCase();
+      var nth = seen[clean] = (seen[clean] || 0) + 1;
+      var key = clean + '#' + nth;
+      var hinted = fb && fb.state === 'fix' && S.ses.stage === 3 && fb.extraHalf != null && Number(index >= words.length / 2) === fb.extraHalf;
+      return '<button class="opt' + (val === key ? ' is-sel' : '') + (hinted ? ' extra-hint' : '') + '" data-extra="' + esc(key) + '"' + (editable ? '' : ' disabled') + '>' + esc(word) + '</button> ';
+    }).join('') + '</div><button class="btn ghost" data-extra="✓"' + (editable ? '' : ' disabled') + '>✓ Dòng đúng</button>';
+    return;
+  }
   if (isText(q)) {
     var h = '<div class="txtwrap">';
     if (fb && fb.state === 'fix' && q.value1) h += '<p class="prev">Lần trước em viết: <s>' + esc(q.value1) + '</s></p>';
-    h += '<input type="text" id="txt" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"' +
+    if (q.type === 'transform' && q.keyword) h += '<p><b>TỪ KHÓA: ' + esc(q.keyword) + '</b></p>';
+    var input = '<input type="text" id="txt" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"' +
+      (q.type === 'transform' ? ' style="width:' + Math.min(55, Math.max(14, String(S.ans[q.num] || '').length + 3)) + 'ch;max-width:100%"' : '') +
       (editable ? '' : ' disabled') + ' aria-label="Câu trả lời câu ' + esc(q.label) + '" placeholder="Gõ câu trả lời">';
+    if (q.type === 'transform') {
+      var lines = String(q.text || '').split('\n').map(function(x){return x.trim();}).filter(Boolean);
+      var sentence = lines.slice(2).join(' '), match = sentence.match(/_{3,}/);
+      h += match ? '<p class="transform-sentence">' + blankHtml(sentence.slice(0,match.index)) + input + blankHtml(sentence.slice(match.index+match[0].length)) + '</p>' : input;
+    } else h += input;
     var g = groupOf(q);
+    if (q.type === 'wordform' && q.root) h += '<small>Từ gốc: <b>' + esc(q.root) + '</b></small>';
     if (g && g.limit) h += '<p class="count" id="wc"></p>';
     h += '</div>';
     box.innerHTML = h;
@@ -805,10 +831,15 @@ function updateCount(q) {
   var el = $('wc');
   var g = groupOf(q);
   if (!el || !g || !g.limit) return;
-  var n = String(S.ans[q.num] || '').trim().replace(/([\p{L}\p{N}])\s*-\s*(?=[\p{L}\p{N}])/gu, '$1-').split(/\s+/).filter(Boolean).length;
+  var n = countAnswerWords(S.ans[q.num]);
   var over = n > g.limit.max || (n > 0 && n < g.limit.min);
-  el.textContent = 'Giới hạn: ' + g.limitText + ' · em đang viết ' + n + ' từ';
+  el.textContent = n + '/' + g.limitText + ' từ' + (q.keyword && String(S.ans[q.num] || '').toLowerCase().split(/\s+/).indexOf(q.keyword.toLowerCase()) < 0 ? ' · Chưa có từ khóa ' + q.keyword : '');
   el.className = 'count' + (over ? ' over' : '');
+}
+
+function countAnswerWords(v) {
+  return String(v || '').trim().replace(/([\p{L}\p{N}])\s*-\s*(?=[\p{L}\p{N}])/gu, '$1-')
+    .split(/\s+/).filter(Boolean).reduce(function (n, word) { return n + (/[\p{L}][’'][\p{L}]/u.test(word) ? 2 : 1); }, 0);
 }
 
 function feedbackHtml(q) {
@@ -821,6 +852,7 @@ function feedbackHtml(q) {
   if (fb.state === 'fix') {
     return '<div class="fb bad">' +
       '<p class="head">' + (fb.empty ? 'Lần trước em bỏ trống câu này.' : 'Lần trước chưa đúng.') + (fb.label ? ' <span class="chip">' + esc(fb.label) + '</span>' : '') + '</p>' +
+      (fb.halves ? '<p>' + (fb.halves[0] ? 'Nửa đầu đúng rồi, xem lại phần sau.' : fb.halves[1] ? 'Nửa sau đúng rồi, xem lại phần đầu.' : 'Xem lại cả hai nửa câu.') + '</p>' : '') +
       (fb.hint ? '<p>' + nl(fb.hint) + '</p>' : '') +
       (fb.wrongExpl ? '<p><b>Vì sao câu em chọn chưa đúng:</b> ' + nl(fb.wrongExpl) + '</p>' : '') +
       (fb.hint2 ? '<p><b>Gợi ý mức 2:</b> ' + nl(fb.hint2) + '</p>' : '') +
@@ -835,7 +867,8 @@ function feedbackHtml(q) {
   else head = 'Chưa đúng.';
   var ok = fb.ok1 || fb.ok2 || fb.ok3;
   var h = '<div class="fb ' + (ok ? 'ok' : 'bad') + '"><p class="head">' + head + '</p>' +
-    '<p class="ans">Đáp án: <b>' + esc(fb.correct) + '</b></p>' +
+    (fb.marks === 2 ? '<p>Điểm câu: ' + (fb.marksFinal || 0) + '/2</p>' + transformHalvesHtml(q,fb) : '') +
+    '<p class="ans">Đáp án: <b>' + esc(fb.correctHalves || fb.correct) + '</b></p>' +
     (fb.explCorrect ? '<div class="why"><b>Vì sao</b><p>' + nl(fb.explCorrect) + '</p></div>' : '');
   (fb.wrong || []).forEach(function (w) {
     h += '<div class="why"><b>Vòng ' + w.round + ' em trả lời "' + esc(w.answer) + '"' + (w.label ? ' · ' + esc(w.label) : '') + '</b>' +
@@ -843,6 +876,15 @@ function feedbackHtml(q) {
   });
   if (fb.quote) h += '<div><button class="link" data-hl="exact">Xem câu chứng cứ trong bài</button></div>';
   return h + '</div>';
+}
+
+function transformHalvesHtml(q, fb) {
+  if (!fb.halvesFinal || !q.value) return '';
+  var pattern = String(fb.correctHalves || '').split('||')[0].replace(/\[([^|\]]+)(?:\|[^\]]+)?\]/g,'$1');
+  var count = pattern.trim().split(/\s+/).length, words = String(q.value).trim().split(/\s+/);
+  var first = words.slice(0,count).join(' '), second = words.slice(count).join(' ');
+  return '<p>Câu em viết: <span class="' + (fb.halvesFinal[0] ? 'half-ok' : 'half-bad') + '">' + esc(first) + '</span> ' +
+    '<span class="' + (fb.halvesFinal[1] ? 'half-ok' : 'half-bad') + '">' + esc(second) + '</span></p>';
 }
 
 function go(i) {
@@ -974,6 +1016,12 @@ function renderReport() {
 $('btnStart').addEventListener('click', function () { start(false); });
 $('btnReload').addEventListener('click', function () { location.reload(); });
 $('answerBox').addEventListener('click', function (ev) {
+  var extra = ev.target.closest('[data-extra]');
+  if (extra && !extra.disabled) {
+    var eq = cur(), key = extra.getAttribute('data-extra');
+    S.ans[eq.num] = S.ans[eq.num] === key ? '' : key;
+    changed(eq); renderAnswer(eq); return;
+  }
   var b = ev.target.closest('.opt');
   if (!b || b.disabled) return;
   var q = cur();
@@ -994,6 +1042,7 @@ $('answerBox').addEventListener('input', function (ev) {
   if (ev.target.id !== 'txt') return;
   var q = cur();
   S.ans[q.num] = ev.target.value;
+  if (q.type === 'transform') ev.target.style.width = Math.min(55, Math.max(14, ev.target.value.length + 3)) + 'ch';
   updateCount(q);
   changed(q);
 });
