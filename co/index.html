@@ -223,7 +223,7 @@ textarea { min-height: 100px; }
 <header class="bar"><div class="brand"><b>Theo dõi lớp</b><span id="updated"></span></div><button id="classesBtn" class="btn ghost small" hidden>Chọn lớp</button><button id="reloadBtn" class="btn ghost small" hidden>Tải lại</button><button id="logoutBtn" class="link" hidden>Đăng xuất</button></header>
 <main>
 <section class="center" id="login"><form class="card" id="loginForm"><h1 class="title">Trang giáo viên</h1><label class="f" for="username">Tên đăng nhập<input id="username" value="co" placeholder="VD: Cô Mai Thu Phương" autocomplete="username"></label><label class="f" for="passcode">Mật khẩu<input id="passcode" type="password" autocomplete="current-password" required></label><p>Lần đầu: tên đăng nhập co, mật khẩu theo dõi hiện tại của cô.</p><button class="btn primary" id="loginBtn">Vào</button></form></section>
-<nav id="staffNav" hidden style="padding:16px;gap:12px;flex-wrap:wrap"><button id="navTrack" class="btn ghost">Theo dõi lớp</button><button id="navWriting" class="btn ghost">Chấm writing</button><button id="navAccounts" class="btn ghost">Tài khoản</button></nav>
+<nav id="staffNav" hidden style="padding:16px;gap:12px;flex-wrap:wrap"><button id="navTrack" class="btn ghost">Theo dõi lớp</button><button id="navWriting" class="btn ghost">Chấm writing</button><button id="navAlt" class="btn ghost">Duyệt đáp án</button><button id="navAccounts" class="btn ghost">Tài khoản</button></nav>
 <section id="staffPanel" hidden class="dashboard"></section>
 <div class="dashboard"><p id="message" role="status" hidden></p><div id="content" hidden></div><section class="card" id="studentDetail" hidden tabindex="-1"></section><section class="card" id="copyFallback" hidden><label class="f" for="copyText">Chữ đã được chọn. Cô nhấn giữ hoặc Ctrl+C để copy.<textarea id="copyText" readonly></textarea></label><button class="btn ghost small" id="closeCopy">Đóng</button></section></div>
 </main>
@@ -370,12 +370,28 @@ function staffEnter(session) {
   $('login').hidden=true;$('staffNav').hidden=false;$('logoutBtn').hidden=false;$('reloadBtn').hidden=false;
   $('navTrack').hidden=session.role!=='Giáo viên';$('navAccounts').hidden=session.role!=='Giáo viên';
   if(session.role==='Giáo viên')staffTrack();else writingList();
+  call('apiAltList', D.pass).then(function(items){$('navAlt').textContent='Duyệt đáp án' + (items.length ? ' ('+items.length+')' : '');});
 }
 function staffPage(page){D.page=page;$('studentDetail').hidden=true;$('content').hidden=page!=='track';$('staffPanel').hidden=page==='track';message('');}
 function staffTrack(){staffPage('track');fetchClass(D.cls);}
 $('navTrack').addEventListener('click',staffTrack);
 $('navWriting').addEventListener('click',function(){writingList();});
+$('navAlt').addEventListener('click',altList);
 $('navAccounts').addEventListener('click',accountsView);
+var ALT=[];
+function altList(){
+  staffPage('alt'); message('Đang tải đáp án chờ duyệt…');
+  return call('apiAltList',D.pass).then(function(items){
+    ALT=items; message(''); $('navAlt').textContent='Duyệt đáp án' + (items.length ? ' ('+items.length+')' : '');
+    $('staffPanel').innerHTML='<section class="card"><h1>Duyệt đáp án</h1><p>'+items.length+' mục chờ cô</p></section>'+
+      items.map(function(it,i){return '<article class="card"><h2>'+esc(it.test)+' · Câu '+it.question+'</h2><p>'+esc(it.cls)+' · '+it.count+' em</p><p>'+esc(it.original).replace(/\n/g,'<br>')+'</p><p>Từ khóa: '+esc(it.keyword||'—')+'</p><p>Key: '+esc(it.key.join(' / '))+'</p><p>Em viết: <b>'+esc(it.answer)+'</b></p><p>AI: '+esc(it.reason)+'</p><button class="btn primary" data-alt="'+i+'" data-verdict="dung">Đúng</button> <button class="btn ghost" data-alt="'+i+'" data-verdict="sai">Sai</button></article>';}).join('');
+  },function(e){message(msgOf(e));});
+}
+$('staffPanel').addEventListener('click',function(ev){
+  var button=ev.target.closest('[data-alt]'); if(!button||D.busy)return;
+  var it=ALT[Number(button.getAttribute('data-alt'))]; if(!it)return;
+  busy(true);call('apiAltReview',D.pass,it.id,button.getAttribute('data-verdict')).then(altList,function(e){message(msgOf(e));}).then(function(){busy(false);});
+});
 function writingList(){
   staffPage('writing');var version=D.version;message('Đang tải bài viết…');
   return call('apiWList',D.pass,DW.filter).then(function(data){
