@@ -276,6 +276,7 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 <div class="toast" id="toast" role="status" hidden></div>
 
 <section id="vWriting" hidden class="card" style="max-width:960px;margin:20px auto;padding:20px"><div id="wContent"></div><p id="wMessage" role="status"></p></section>
+<section id="vVocabulary" hidden class="center"><div class="card" id="vocabContent"></div></section>
 <script>window.API_URL = "https://script.google.com/macros/s/AKfycbwGLJXlBk0FaNWnOvMJJb15OBDoogiy-oAz_j0PCJuHsPMT45JL4sw8Wc60dhn7-UPW/exec";</script>
 <script>
 var G = document.body.getAttribute('data-g') || '';
@@ -299,6 +300,7 @@ function esc(s) {
 function nl(s) { return esc(s).replace(/\n/g, '<br>'); }
 function show(view) {
   $('vWriting').hidden = view !== 'vWriting';
+  $('vVocabulary').hidden = view !== 'vVocabulary';
   ['vLoading', 'vError', 'vStart', 'vQuiz', 'vReport', 'vClass'].forEach(function (v) { $(v).hidden = v !== view; });
   $('dots').hidden = view !== 'vQuiz';
   if (view !== 'vQuiz') $('btnTop').hidden = true;
@@ -424,15 +426,16 @@ function renderClassNames(message) {
 function renderClass(data) {
   classRemember(C.name);
   $('hTitle').textContent = C.info.cls; $('hSub').textContent = 'Danh sách bài';
-  var h = '<div class="card"><h1 class="title">' + esc(C.info.cls) + '</h1><p>Xin chào <b>' + esc(C.name) + '</b></p><button class="link" data-class="change">Không phải em? Đổi tên</button></div><h2 style="margin:24px 0 16px">Bài của lớp</h2><div class="cards">';
+  var h = '<div class="card"><h1 class="title">' + esc(C.info.cls) + '</h1><p>Xin chào <b>' + esc(C.name) + '</b></p><button class="link" data-class="change">Không phải em? Đổi tên</button><button class="btn ghost small" id="reviewToday" data-class="review">Ôn từ hôm nay</button><button class="btn ghost small" data-class="book">Sổ từ của em</button><button class="btn ghost small" data-class="board">Bảng thi đua tuần</button></div><h2 style="margin:24px 0 16px">Bài của lớp</h2><div class="cards">';
   var tests = data.tests.map(function (t, i) { return { t: t, i: i }; }).sort(function (a, b) { return (a.t.status === 'chua' ? 0 : 1) - (b.t.status === 'chua' ? 0 : 1) || a.i - b.i; });
   tests.forEach(function (entry) {
     var t = entry.t, status = 'Chưa làm', button = 'Làm bài';
     if (t.status === 'dang') { status = t.stage > 1 ? 'Đang sửa (lần ' + t.stage + ')' : 'Đang làm lần 1'; button = 'Làm tiếp'; }
     if (t.status === 'xong') { status = 'Xong · ' + t.score + '/' + t.total + (t.final != null ? ' (sau sửa ' + t.final + '/' + t.total + ')' : ''); button = 'Xem lại'; }
     if (t.kind === 'Viết') { status = t.writingStatus + (t.score1 != null ? ' · Lần 1: ' + t.score1 : '') + (t.score2 != null ? ' → Lần 2: ' + t.score2 + ' · Tiến bộ: ' + t.delta : ''); button = 'Mở bài Writing'; }
+    if (t.kind === 'Từ vựng') { status = t.status === 'xong' ? 'Xong · ' + t.score + '%' : t.status === 'dang' ? 'Đang học' : 'Chưa học'; button = 'Học từ'; }
     h += '<article class="card"><h3>' + esc(t.title) + '</h3><p class="note">' + esc(t.mode) + '</p>' + (t.due ? '<p class="' + (t.dueOver ? 'overdue' : 'note') + '">Hạn nộp: ' + esc(t.due) + (t.dueOver ? ' (đã qua)' : '') + '</p>' : '') + '<p>' + esc(status) + '</p>' +
-      (t.kind === 'Viết' ? '<p>Writing · tối đa hai lần</p>' : modeBadge(t.mode, t.maxRounds)) +
+      (t.kind === 'Viết' ? '<p>Writing · tối đa hai lần</p>' : t.kind === 'Từ vựng' ? '<p>Bài từ vựng khoảng 5 phút</p>' : modeBadge(t.mode, t.maxRounds)) +
       (t.status === 'dang' && t.score != null ? '<p>Điểm chính thức (lần 1): ' + t.score + '/' + t.total + '</p>' : '') +
       (t.maxRounds ? '<p>Đã nộp ' + t.rounds + '/' + t.maxRounds + ' lần' + (t.best != null ? ' · sau lần cuối ' + Math.round(t.best * 100) + '%' : '') + '</p>' : '') +
       '<button class="btn primary" data-g="' + esc(t.g) + '">' + button + '</button>' + '</article>';
@@ -440,8 +443,11 @@ function renderClass(data) {
   h += '</div>' + (!tests.length ? '<p>Cô chưa giao bài nào. Em quay lại sau nhé.</p>' : '') + '<div class="card" style="margin-top:24px"><h2>Tiến bộ của em</h2>' + classChart(data.progress);
   if (data.errors.length) h += '<h3>Các dạng lỗi em cần chú ý</h3>' + data.errors.slice(0, 3).map(function (e) { return '<div class="type"><b>' + esc(e.label) + ' · ' + e.count + ' lần</b><p>' + esc(e.tip) + '</p></div>'; }).join('');
   $('classContent').innerHTML = h + '</div>'; show('vClass');
+  call('apiVReview', LOP, C.name, C.pin).then(function (r) { if ($('reviewToday')) $('reviewToday').textContent = 'Ôn từ hôm nay: ' + r.due + ' từ'; }, function () {});
 }
 function classStart(g, wantNew) {
+  var vocab = (C.info && C.info.tests || []).some(function (x) { return x.g === g && x.kind === 'Từ vựng'; });
+  if (vocab) return vocabStart(g);
   if (C.busy) return;
   C.busy = true; G = g; LS_KEY = 'reading-test:' + G;
   $('loadMsg').textContent = 'Đang mở bài…'; show('vLoading');
@@ -449,10 +455,125 @@ function classStart(g, wantNew) {
     S.name = C.name; S.pin = C.pin; load(ses);
   }, function (e) { fatal('Chưa mở được bài', msgOf(e)); }).then(function () { C.busy = false; });
 }
+var V = { g: '', cards: [], next: '', review: [], reviewAt: 0, results: [], flipAt: 0 };
+function vocabSpeak(word) {
+  if (!('speechSynthesis' in window)) return;
+  var voices = speechSynthesis.getVoices(), voice = voices.filter(function (v) { return /^en-GB/i.test(v.lang); })[0] || voices.filter(function (v) { return /^en-US/i.test(v.lang); })[0] || voices.filter(function (v) { return /^en/i.test(v.lang); })[0];
+  if (!voice) return;
+  speechSynthesis.cancel(); var utterance = new SpeechSynthesisUtterance(word); utterance.voice = voice; utterance.lang = voice.lang; speechSynthesis.speak(utterance);
+}
+function vocabSpeaker(word) {
+  var voices = 'speechSynthesis' in window ? speechSynthesis.getVoices() : [];
+  if (!voices.some(function (v) { return /^en/i.test(v.lang); })) return '';
+  return '<button class="btn ghost small" data-speak="' + esc(word) + '" aria-label="Nghe phát âm">🔊 Nghe</button>';
+}
+function vocabStart(g) {
+  V.g = g; $('loadMsg').textContent = 'Đang mở bài từ…'; show('vLoading');
+  call('apiVStart', g, C.name, C.pin).then(function (data) {
+    V.cards = data.cards; V.next = data.next;
+    if (data.completed) { $('vocabContent').innerHTML = '<h2>' + esc(data.title) + '</h2><p>Đã hoàn thành: ' + data.score + '% đúng lần đầu.</p><button class="btn ghost" data-v="back">Về lớp</button>'; show('vVocabulary'); return; }
+    V.learnAt = 0; vocabDrawLearn();
+  }, function (e) { fatal('Chưa mở được bài từ', msgOf(e)); });
+}
+function vocabDrawLearn() {
+  var card = V.cards[V.learnAt];
+  if (!card) return vocabDrawTask();
+  $('vocabContent').innerHTML = '<p class="eyebrow">Làm quen từ ' + (V.learnAt + 1) + '/' + V.cards.length + '</p><h2>' + esc(card.word) + '</h2><p>' + esc(card.ipa) + '</p>' + vocabSpeaker(card.word) + '<p><b>' + esc(card.meaning) + '</b></p><p>' + esc(card.context) + '</p><p>' + esc(card.example) + '</p><button class="btn primary" data-v="learnNext">' + (V.learnAt + 1 === V.cards.length ? 'Bắt đầu luyện tập' : 'Từ tiếp theo') + '</button>';
+  show('vVocabulary');
+}
+function vocabDrawTask() {
+  var card = V.cards.filter(function (x) { return x.code === V.next; })[0];
+  if (!card) return openClass();
+  var prompt = card.task === 'gap' ? card.context.replace(new RegExp(card.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '_____') :
+    card.task === 'collocation' ? 'Cụm nào đi kèm với “' + card.word + '”?' :
+    card.task === 'paraphrase' ? 'Diễn đạt lại “' + card.word + '” thế nào?' : 'Nghĩa của “' + card.word + '” là gì?';
+  $('vocabContent').innerHTML = '<p class="eyebrow">Bài từ vựng</p><h2>' + esc(card.word) + '</h2><p>' + esc(card.ipa) + '</p>' + vocabSpeaker(card.word) +
+    '<p>' + esc(prompt) + '</p>' + (card.choices.length ? '<div class="opts">' + card.choices.map(function (choice) { return '<button class="opt" data-choice="' + esc(choice) + '">' + esc(choice) + '</button>'; }).join('') + '</div>' : '<form id="vocabForm"><label class="f">Câu trả lời<input id="vocabAnswer" type="text" autocomplete="off" required></label><button class="btn primary">Kiểm tra</button></form>') + '<p id="vocabFeedback" role="status"></p><button class="btn ghost" data-v="back">Về lớp</button>';
+  show('vVocabulary');
+}
+function vocabReview() {
+  $('loadMsg').textContent = 'Đang lấy thẻ ôn…'; show('vLoading');
+  call('apiVReview', LOP, C.name, C.pin).then(function (data) {
+    V.review = data.cards; V.reviewAt = 0; V.results = []; vocabDrawReview();
+  }, function (e) { fatal('Chưa mở được thẻ ôn', msgOf(e)); });
+}
+function vocabDrawReview() {
+  var card = V.review[V.reviewAt];
+  if (!card) {
+    if (!V.results.length) { $('vocabContent').innerHTML = '<h2>Hôm nay chưa có từ đến hạn</h2><button class="btn ghost" data-v="back">Về lớp</button>'; show('vVocabulary'); return; }
+    $('vocabContent').innerHTML = '<h2>Đã ôn ' + V.results.length + ' từ</h2><p>Đang lưu kết quả…</p>'; show('vVocabulary');
+    call('apiVReviewSave', LOP, C.name, C.pin, V.results).then(function (r) { $('vocabContent').innerHTML = '<h2>Ôn xong</h2><p>+' + r.earned + ' điểm tuần này.</p>' + (r.near && r.near.length ? '<p>Gần đúng, kiểm tra chính tả: ' + esc(r.near.join(', ')) + '</p>' : '') + '<button class="btn ghost" data-v="back">Về lớp</button>'; }, function (e) { $('vocabContent').innerHTML = '<p class="err">' + esc(msgOf(e)) + '</p><button class="btn primary" data-v="retry">Lưu lại</button>'; });
+    return;
+  }
+  V.flipAt = 0;
+  if (card.box >= 3) {
+    V.flipAt = Date.now();
+    $('vocabContent').innerHTML = '<p class="eyebrow">Thẻ ' + (V.reviewAt + 1) + '/' + V.review.length + ' · Hộp ' + card.box + '</p><h2>Điền từ vào câu</h2><p>' + esc(card.context.replace(card.word, '_____')) + '</p><form id="vocabReviewForm"><input id="vocabReviewAnswer" type="text" autocomplete="off" required><button class="btn primary">Kiểm tra</button></form>';
+    show('vVocabulary'); return;
+  }
+  $('vocabContent').innerHTML = '<p class="eyebrow">Thẻ ' + (V.reviewAt + 1) + '/' + V.review.length + ' · Hộp ' + card.box + '</p><h2>' + esc(card.word) + '</h2><p>' + esc(card.ipa) + '</p>' + vocabSpeaker(card.word) +
+    '<button class="btn primary" data-v="flip">Lật thẻ</button><div id="vocabReverse" hidden><p>' + esc(card.meaning) + '</p><p>' + esc(card.context) + '</p><button class="btn ghost" data-v="forget">Quên</button><button class="btn primary" data-v="remember">Nhớ</button></div>';
+  show('vVocabulary');
+}
+function vocabBook() {
+  $('loadMsg').textContent = 'Đang mở sổ từ…'; show('vLoading');
+  call('apiVBook', LOP, C.name, C.pin).then(function (data) {
+    V.book = data.words;
+    $('vocabContent').innerHTML = '<h2>Sổ từ của em</h2><input id="vocabSearch" type="text" placeholder="Tìm từ"><div id="vocabBookList"></div><button class="btn ghost" data-v="back">Về lớp</button>';
+    show('vVocabulary'); vocabFilterBook();
+  }, function (e) { fatal('Chưa mở được sổ từ', msgOf(e)); });
+}
+function vocabFilterBook() {
+  var query = ($('vocabSearch').value || '').toLocaleLowerCase();
+  $('vocabBookList').innerHTML = (V.book || []).filter(function (x) { return x.word.toLocaleLowerCase().indexOf(query) >= 0; }).map(function (x) {
+    return '<article class="card"><b>' + esc(x.word) + '</b><span>' + esc(x.ipa) + '</span>' + vocabSpeaker(x.word) + '<p>' + esc(x.meaning) + '</p><small>Hộp ' + x.box + ' · ' + esc(x.source) + '</small></article>';
+  }).join('') || '<p>Chưa có từ nào.</p>';
+}
+function vocabBoard() {
+  $('loadMsg').textContent = 'Đang xem bảng thi đua…'; show('vLoading');
+  call('apiVBoard', LOP, C.name, C.pin).then(function (data) {
+    $('vocabContent').innerHTML = '<h2>Bảng thi đua ' + esc(data.week) + '</h2><ol>' + data.top.map(function (x) { return '<li>' + esc(x.name) + ': ' + x.points + ' điểm</li>'; }).join('') + '</ol><p>Em đang đứng thứ ' + data.rank + ' / ' + data.total + '</p><button class="btn ghost" data-v="back">Về lớp</button>';
+    show('vVocabulary');
+  }, function (e) { fatal('Chưa mở được bảng thi đua', msgOf(e)); });
+}
+$('vocabContent').addEventListener('submit', function (event) {
+  if (event.target.id === 'vocabReviewForm') {
+    event.preventDefault(); var input = $('vocabReviewAnswer').value, card = V.review[V.reviewAt];
+    V.results.push({ code: card.code, answer: input, ms: Date.now() - V.flipAt }); V.reviewAt++; vocabDrawReview(); return;
+  }
+  if (event.target.id !== 'vocabForm') return;
+  event.preventDefault(); var answer = $('vocabAnswer').value, button = event.target.querySelector('button'); vocabSendAnswer(answer, button);
+});
+function vocabSendAnswer(answer, button) {
+  button.disabled = true;
+  call('apiVAnswer', V.g, C.name, C.pin, V.next, answer).then(function (r) {
+    $('vocabFeedback').textContent = r.correct ? 'Đúng!' : 'Chưa đúng. Đáp án: ' + r.expected + '. Em sẽ gặp lại từ này cuối lượt.';
+    V.next = r.next;
+    setTimeout(function () { if (r.completed) { $('vocabContent').innerHTML = '<h2>Hoàn thành bài từ</h2><p>' + r.score + '% đúng lần đầu.</p><button class="btn ghost" data-v="back">Về lớp</button>'; } else vocabDrawTask(); }, 1500);
+  }, function (e) { $('vocabFeedback').textContent = msgOf(e); button.disabled = false; });
+}
+$('vocabContent').addEventListener('input', function (event) { if (event.target.id === 'vocabSearch') vocabFilterBook(); });
+$('vocabContent').addEventListener('click', function (event) {
+  var button = event.target.closest('button'); if (!button) return;
+  if (button.hasAttribute('data-speak')) return vocabSpeak(button.getAttribute('data-speak'));
+  if (button.hasAttribute('data-choice')) return vocabSendAnswer(button.getAttribute('data-choice'), button);
+  var action = button.getAttribute('data-v');
+  if (action === 'back') return LOP ? openClass() : renderStart();
+  if (action === 'learnNext') { V.learnAt++; return vocabDrawLearn(); }
+  if (action === 'flip') { V.flipAt = Date.now(); $('vocabReverse').hidden = false; button.hidden = true; }
+  if (action === 'remember' || action === 'forget') {
+    V.results.push({ code: V.review[V.reviewAt].code, remembered: action === 'remember', ms: Date.now() - V.flipAt });
+    V.reviewAt++; vocabDrawReview();
+  }
+  if (action === 'retry') vocabDrawReview();
+});
 $('btnClassBack').addEventListener('click', openClass);
 $('classContent').addEventListener('click', function (ev) {
   var b = ev.target.closest('button'); if (!b || C.busy) return;
   if (b.hasAttribute('data-g')) return classStart(b.getAttribute('data-g'), b.hasAttribute('data-new'));
+  if (b.getAttribute('data-class') === 'review') return vocabReview();
+  if (b.getAttribute('data-class') === 'book') return vocabBook();
+  if (b.getAttribute('data-class') === 'board') return vocabBoard();
   if (b.getAttribute('data-class') === 'change') { C.name = ''; C.pin = ''; S.ses = null; classRemember(''); renderClassNames(''); }
   else if (b.getAttribute('data-class') === 'enter') {
     var name = $('className').value, pin = $('classPin').value.trim();
@@ -498,6 +619,7 @@ function start(wantNew) {
     name = S.name; pin = S.pin;
   }
   startErr('');
+  if (S.info.kind === 'Từ vựng') { C.name = name; C.pin = pin; lsSet({ name: name }); return vocabStart(G); }
   $('btnStart').disabled = true;
   $('btnStart').textContent = 'Đang mở…';
   if (wantNew) { $('loadMsg').textContent = 'Đang tạo lượt mới…'; show('vLoading'); }
